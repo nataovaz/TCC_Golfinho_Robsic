@@ -1,88 +1,117 @@
-# Hello World ROS2 Foxy + Unreal Engine 5 + rclUE
-
+# TCC: Integração de ROS2 Foxy, Unreal Engine 5.3 e Georeferenciamento
 
 **Autor:** Natan Ferreira Rosa de Jesus Vaz — Trabalho de Conclusão de Curso
 
-**Universidade** Universidade Federal de Itajubá
+**Universidade:** Universidade Federal de Itajubá
 
-Este projeto é um exemplo mínimo de integração entre Unreal Engine 5.3, ROS2 Foxy e o plugin rclUE, usando um ator C++ (MyActor) como subscriber de mensagens String do ROS2.
+Este repositório apresenta o desenvolvimento de um Trabalho de Conclusão de Curso (TCC) que demonstra uma integração completa entre Unreal Engine 5.3, ROS2 Foxy, o plugin rclUE e o sistema de georreferenciamento Cesium for Unreal. O objetivo foi criar uma aplicação que recebe e publica mensagens ROS2 em tempo real dentro de uma cena 3D georreferenciada.
+
+---
 
 ## Requisitos
-- Unreal Engine 5.3 (compilado para Linux)
-- ROS2 Foxy instalado e configurado
-- Plugin [rclUE](https://github.com/RobotecAI/rclUE) (copie para a pasta Plugins/ se não estiver instalado globalmente)
-- Linux (testado no Ubuntu)
+
+- **Unreal Engine 5.3** (compilado para Linux)
+- **ROS2 Foxy** instalado e configurado
+- **Plugin rclUE** (copie para `Plugins/` se não estiver instalado globalmente)
+- **Plugin Cesium for Unreal** (para georeferenciamento)
+- **Linux** (testado no Ubuntu)
+
+---
 
 ## Estrutura do Projeto
-- `Source/` — Código C++ do projeto (inclui o MyActor)
-- `Config/` — Configurações do projeto Unreal
-- `Content/` — Apenas os assets essenciais para abrir o projeto
-- `Plugins/rclUE/` — Plugin de integração ROS2 <-> Unreal
-- `Campus_Itabira.uproject` — Arquivo do projeto Unreal
 
-## Exemplo de execução
+- `Source/` — Código C++ do projeto (MyActor, ROS2Connector, MyUserWidget, PlayerController)
+- `Config/` — Configurações do projeto Unreal
+- `Content/` — Assets essenciais para o funcionamento mínimo
+- `Plugins/rclUE/` — Integração ROS2 ↔ Unreal
+- `Plugins/Cesium/` — Georeferenciamento e conversão para coordenadas geodésicas
+- `Campus_Itabira.uproject` — Arquivo do projeto Unreal
 
-Veja abaixo um print do projeto funcionando, recebendo mensagens do ROS2 no Unreal Engine:
+---
 
-![Hello World funcionando](Screenshot%20from%202025-04-15%2023-34-36.png)
+## Instalação e Execução
 
-2. **Configure o ambiente ROS2:**
+1. **Clone o repositório** e entre na pasta do projeto:
+   ```bash
+   git clone https://github.com/SeuUsuario/SeuRepo.git  
+   cd SeuRepo
+   ```
+2. **Configure o ambiente ROS2**:
    ```bash
    source /opt/ros/foxy/setup.bash
    ```
-
-3. **Abra o Unreal pelo terminal:**
+3. **Abra o Unreal Editor pelo terminal**:
    ```bash
-   /caminho/para/UnrealEditor Campus_Itabira.uproject
+   /caminho/para/UnrealEngine/Engine/Binaries/Linux/UnrealEditor Campus_Itabira.uproject
    ```
-
-4. **Compile o projeto (se necessário):**
-   - Use o menu do Unreal ou `make` se configurado.
-
-5. **Adicione o ator MyActor à cena.**
-   - Ele já está configurado para ser subscriber do tópico `/teste_unreal`.
-
-6. **No terminal, publique uma mensagem ROS2:**
+4. **Compile o projeto** (se necessário):
+   - Pelo menu do Editor ou via `make` se estiver configurado para build automático.
+5. **Adicione os atores à cena**:
+   - `MyActor` (subscriber ROS2 no tópico `/teste_unreal`)
+   - `ROS2Connector` (inicializa o nó e gerencia publishers/subscribers)
+   - `CesiumGeoreference` (objeto que faz a conversão de coordenadas)
+6. **Publique e visualize mensagens ROS2**:
    ```bash
    ros2 topic pub /teste_unreal std_msgs/msg/String "{data: 'Hello Unreal'}"
    ```
+   Verifique no Output Log do Editor a chegada da mensagem.
+7. **Exiba latitude e longitude em HUD**:
+   - O `PlayerController` instancia um `UserWidget` que atualiza dois `TextBlock` (Latitude, Longitude) via `ACesiumGeoreference` em `AMyActor::Tick()`.
 
-7. **Veja o log no Unreal:**
-   - O Output Log mostrará a mensagem recebida pelo MyActor.
+---
 
-## Observações
-- O projeto está limpo, sem arquivos de build, cache ou assets desnecessários.
-- Para adicionar outros exemplos, basta criar novos atores ou componentes seguindo o padrão do MyActor.
-- Para dúvidas sobre o rclUE, consulte: https://github.com/RobotecAI/rclUE
+## Cálculos Utilizados
 
-## Próximos Passos
+- **Conversão de unidades**:
+  ```cpp
+  double X_m = GetActorLocation().X / 100.0;
+  double Y_m = GetActorLocation().Y / 100.0;
+  double Z_m = GetActorLocation().Z / 100.0;
+  ```
+- **Transformação ECEF ↔ Geodésico (WGS84)**:
+  - Latitude: ϕ = arctan2(Z, √(X² + Y²))
+  - Longitude: λ = arctan2(Y, X)
+  - Altitude: diferença entre o raio ao ponto e o semi-eixo maior (a = 6378137 m)
+- **Cálculo de latência ROS2**:
+  Ao receber a mensagem em `MyActor`, registramos `rclcpp::Time::now()` e comparamos com o timestamp publicado para avaliar atrasos.
 
-### Integração com Cesium for Unreal e HUD de Latitude/Longitude
+---
 
-Referência: https://github.com/CesiumGS/cesium-unreal/releases
+## Georeferenciamento
 
-
-Nesta etapa, utilizamos o plugin Cesium for Unreal para converter as coordenadas do mundo Unreal em latitude, longitude e exibi-las em um HUD na tela:
-
-1. Ative o plugin Cesium for Unreal em **Edit > Plugins** e reinicie o Editor.
-2. Crie um `UserWidget` (`UMyUserWidget`) com dois `TextBlock` (TxtLatitude e TxtLongitude) e implemente os métodos:
-   - `NativeConstruct()` para inicializar valores.
-   - `SetLatLon(double Lat, double Lon)` para atualizar os textos.
-3. Defina o `CampusPlayerController` para instanciar e adicionar `UMyUserWidget` ao viewport em `BeginPlay()`.
-4. No `AMyActor::Tick()`, recupere a referência de `ACesiumGeoreference` e converta a posição do ator:
+1. **Ativação do plugin Cesium for Unreal**:
+   - Em *Edit > Plugins*, marque *Cesium for Unreal* e reinicie o Editor.
+2. **Adição do objeto de georefência**:
+   - Na cena, adicione o ator `CesiumGeoreference`, que gerencia a conversão de coordenadas.
+3. **Implementação em C++ (`AMyActor::Tick`)**:
    ```cpp
-   if (ACesiumGeoreference* Georef = ACesiumGeoreference::GetDefaultGeoreference(GetWorld()))
-   {
-       double Lon, Lat, Height;
-       Georef->TransformLongitudeLatitudeHeight(GetActorLocation(), Lat, Lon, Height);
-       GetWorld()->GetFirstPlayerController<ACampusPlayerController>()
-           ->GetHUDWidget()->SetLatLon(Lat, Lon);
+   if (ACesiumGeoreference* Georef = ACesiumGeoreference::GetDefaultGeoreference(GetWorld())) {
+       double Latitude, Longitude, Height;
+       Georef->TransformLongitudeLatitudeHeight(
+           GetActorLocation(), Latitude, Longitude, Height);
+       auto PC = GetWorld()->GetFirstPlayerController<ACampusPlayerController>();
+       PC->GetHUDWidget()->SetLatLon(Latitude, Longitude);
    }
    ```
-5. Compile e execute o projeto. O HUD deve exibir a Latitude e Longitude em tempo real.
+4. **Visualização no HUD**:
+   - `UMyUserWidget` com dois `TextBlock` vinculados para exibir Latitude e Longitude atualizadas.
 
 ![HUD de Latitude e Longitude](Screenshot%20from%202025-04-18%2022-52-58.png)
 
 ---
 
-contato: natanvaz27@unifei.edu.br
+## Observações
+
+- O repositório está livre de arquivos de build ou caches.
+- Novos exemplos podem ser adicionados criando atores ou componentes que sigam os padrões mostrados.
+- Para detalhes do plugin rclUE: https://github.com/RobotecAI/rclUE
+- Para documentação Cesium for Unreal: https://github.com/CesiumGS/cesium-unreal
+
+---
+
+## Contato
+
+- **E‑mail:** natanvaz27@unifei.edu.br
+- **LinkedIn:** https://www.linkedin.com/in/natan-ferreira-rosa
+
+Este TCC demonstra a aplicação prática de middleware de robótica em ambientes simulados e georreferenciados, contribuindo para pesquisas em navegação autônoma e sistemas ciber-físicos.
