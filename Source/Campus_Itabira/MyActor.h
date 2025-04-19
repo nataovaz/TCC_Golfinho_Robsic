@@ -1,5 +1,6 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
+// =============================
+// MyActor.h
+// =============================
 #pragma once
 
 #include "CoreMinimal.h"
@@ -7,6 +8,7 @@
 #include "ROS2NodeComponent.h"
 #include "ROS2Publisher.h"
 #include "ROS2Subscriber.h"
+#include "CesiumGeoreference.h"
 #include "MyActor.generated.h"
 
 UCLASS()
@@ -14,16 +16,12 @@ class CAMPUS_ITABIRA_API AMyActor : public AActor
 {
     GENERATED_BODY()
 
-public:    
-    // Sets default values for this actor's properties
+public:
     AMyActor();
 
 protected:
-    // Called when the game starts or when spawned
     virtual void BeginPlay() override;
-
-public:    
-    // Called every frame
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void Tick(float DeltaTime) override;
 
 private:
@@ -31,7 +29,12 @@ private:
     UROS2NodeComponent* NodeComponent;
 
     UPROPERTY()
+    UROS2Publisher* PosePublisher;
+
+    UPROPERTY()
     UROS2Subscriber* Subscriber;
+
+    ACesiumGeoreference* Georef = nullptr;
 
     UFUNCTION()
     void OnMessageReceived(const UROS2GenericMsg* InMsg);

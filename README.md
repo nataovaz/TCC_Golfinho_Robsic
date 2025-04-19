@@ -11,7 +11,7 @@ Este projeto é um exemplo mínimo de integração entre Unreal Engine 5.3, ROS2
 - Unreal Engine 5.3 (compilado para Linux)
 - ROS2 Foxy instalado e configurado
 - Plugin [rclUE](https://github.com/RobotecAI/rclUE) (copie para a pasta Plugins/ se não estiver instalado globalmente)
-- Linux Ubuntu 20
+- Linux (testado no Ubuntu)
 
 ## Estrutura do Projeto
 - `Source/` — Código C++ do projeto (inclui o MyActor)
@@ -33,12 +33,11 @@ Veja abaixo um print do projeto funcionando, recebendo mensagens do ROS2 no Unre
 
 3. **Abra o Unreal pelo terminal:**
    ```bash
-   /caminho/para/UnrealEditor <SeuProjetoConfigurado>.uproject
+   /caminho/para/UnrealEditor Campus_Itabira.uproject
    ```
 
 4. **Compile o projeto (se necessário):**
    - Use o menu do Unreal ou `make` se configurado.
-   - Lembrete: Qualquer alteração no código C++ do projeto é necessário recompilar por parte da Unreal, nesse caso utilize o hot reload Ctrl+Shift+Alt+P
 
 5. **Adicione o ator MyActor à cena.**
    - Ele já está configurado para ser subscriber do tópico `/teste_unreal`.

@@ -1,0 +1,38 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "A1E93229-08A2-4B8C-8ABB-17A343E0DA66",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "Campus_Itabira",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine",
+				"UMG"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "rclUE",
+			"Enabled": true
+		},
+		{
+			"Name": "CesiumForUnreal",
+			"Enabled": true,
+			"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/content/87b0d05800a545d49bf858ef3458c4f7",
+			"SupportedTargetPlatforms": [
+				"Win64",
+				"Mac",
+				"Linux",
+				"Android",
+				"IOS"
+			]
+		}
+	],
+	"TargetPlatforms": [
+		"Linux"
+	]
+}
