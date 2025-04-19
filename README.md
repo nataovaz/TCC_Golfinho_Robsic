@@ -112,6 +112,4 @@ Este repositório apresenta o desenvolvimento de um Trabalho de Conclusão de Cu
 ## Contato
 
 - **E‑mail:** natanvaz27@unifei.edu.br
-- **LinkedIn:** https://www.linkedin.com/in/natan-ferreira-rosa
-
-Este TCC demonstra a aplicação prática de middleware de robótica em ambientes simulados e georreferenciados, contribuindo para pesquisas em navegação autônoma e sistemas ciber-físicos.
+- **LinkedIn:** https://www.linkedin.com/in/natao-vaz
