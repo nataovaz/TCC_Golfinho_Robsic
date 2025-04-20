@@ -1,27 +1,24 @@
-// ============================================================
-// Source/Campus_Itabira/MyActor.h
-// ============================================================
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/Actor.h"
-
+#include "GameFramework/Pawn.h"                  // ← trocado
 #include "ROS2NodeComponent.h"
 #include "ROS2Publisher.h"
 #include "ROS2Subscriber.h"
-
 #include "CesiumGlobeAnchorComponent.h"
 #include "CesiumGeoreference.h"
+#include "Camera/CameraComponent.h"
+#include "GameFramework/SpringArmComponent.h"
 
-#include "MyActor.generated.h"               // ← SEMPRE por último!
+#include "MyGolfCartPawn.generated.h"
 
 UCLASS()
-class CAMPUS_ITABIRA_API AMyActor : public AActor
+class CAMPUS_ITABIRA_API AMyGolfCartPawn : public APawn
 {
     GENERATED_BODY()
 
 public:
-    AMyActor();
+    AMyGolfCartPawn();
 
 protected:
     virtual void BeginPlay() override;
@@ -29,19 +26,24 @@ protected:
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 
 private:
-    /* -------- ROS 2 -------- */
+    /* ----- ROS2 ----- */
     UPROPERTY() UROS2NodeComponent* NodeComponent = nullptr;
     UPROPERTY() UROS2Publisher*     PosePublisher = nullptr;
     UPROPERTY() UROS2Subscriber*    Subscriber    = nullptr;
 
-    /* -------- Cesium ------- */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly,
-              meta = (AllowPrivateAccess = "true"))
+    /* ----- Cesium ---- */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess="true"))
     UCesiumGlobeAnchorComponent* GlobeAnchor = nullptr;
-
     ACesiumGeoreference* Georef = nullptr;
 
-    /* -------- Callback ----- */
+    /* ----- Câmera ----- */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess="true"))
+    USpringArmComponent* SpringArm = nullptr;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess="true"))
+    UCameraComponent* Cam = nullptr;
+
+    /* ----- Callback ROS2 ---- */
     UFUNCTION()
     void OnMessageReceived(const UROS2GenericMsg* InMsg);
 };
