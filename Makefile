@@ -48,30 +48,6 @@ StandardSet: RequiredTools UnrealFrontend Campus_ItabiraEditor UnrealInsights
 
 DebugSet: RequiredTools UnrealFrontend-Linux-Debug Campus_ItabiraEditor-Linux-Debug
 
-# Adicionando as regras faltantes para os componentes necessários
-CrashReportClient-Linux-Shipping:
-	$(BUILD) CrashReportClient Linux Shipping $(ARGS)
-
-CrashReportClientEditor-Linux-Shipping:
-	$(BUILD) CrashReportClientEditor Linux Shipping $(ARGS)
-
-ShaderCompileWorker:
-	$(BUILD) ShaderCompileWorker Linux Development $(ARGS)
-
-UnrealLightmass:
-	$(BUILD) UnrealLightmass Linux Development $(ARGS)
-
-EpicWebHelper-Linux-Shipping:
-	$(BUILD) EpicWebHelper Linux Shipping $(ARGS)
-
-UnrealFrontend:
-	$(BUILD) UnrealFrontend Linux Development $(ARGS)
-
-UnrealFrontend-Linux-Debug:
-	$(BUILD) UnrealFrontend Linux Debug $(ARGS)
-
-UnrealInsights:
-	$(BUILD) UnrealInsights Linux Development $(ARGS)
 
 Campus_Itabira-Linux-Debug:
 	 $(PROJECTBUILD) Campus_Itabira Linux Debug  -project="$(GAMEPROJECTFILE)" $(ARGS)
@@ -166,17 +142,5 @@ UnrealServer:
 configure:
 	xbuild /property:Configuration=Development /verbosity:quiet /nologo "$(UNREALROOTPATH)/Engine/Source/Programs/UnrealBuildTool/UnrealBuildTool.csproj"
 	$(PROJECTBUILD) -projectfiles -project="\"$(GAMEPROJECTFILE)\"" -game -engine 
-
-# Adicionar uma regra para limpar o projeto
-clean:
-	rm -rf Binaries/Linux/* Intermediate/* DerivedDataCache/* Saved/Logs/*
-
-# Adicionar uma regra para recompilar apenas o plugin rclUE
-rclUE:
-	$(PROJECTBUILD) rclUE Linux Development -project="$(GAMEPROJECTFILE)" $(ARGS)
-
-# Adicionar uma regra para compilar somente o editor
-editor:
-	$(BUILD) UnrealEditor Linux Development $(ARGS)
 
 .PHONY: $(TARGETS)
