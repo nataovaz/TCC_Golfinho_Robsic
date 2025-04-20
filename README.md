@@ -44,7 +44,7 @@ Este repositório apresenta o desenvolvimento de um Trabalho de Conclusão de Cu
    ```bash
    /caminho/para/UnrealEngine/Engine/Binaries/Linux/UnrealEditor Campus_Itabira.uproject
    ```
-4. **Compile o projeto** (se necessário):
+4. **Compile o projeto**:
    - Pelo menu do Editor ou via `make` se estiver configurado para build automático.
 5. **Adicione os atores à cena**:
    - `MyActor` (subscriber ROS2 no tópico `/teste_unreal`)
