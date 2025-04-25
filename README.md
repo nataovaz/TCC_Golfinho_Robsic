@@ -44,7 +44,7 @@ Este repositório apresenta o desenvolvimento de um Trabalho de Conclusão de Cu
    ```bash
    /caminho/para/UnrealEngine/Engine/Binaries/Linux/UnrealEditor Campus_Itabira.uproject
    ```
-4. **Compile o projeto**:
+4. **Compile o projeto** (se necessário):
    - Pelo menu do Editor ou via `make` se estiver configurado para build automático.
 5. **Adicione os atores à cena**:
    - `MyActor` (subscriber ROS2 no tópico `/teste_unreal`)
@@ -79,9 +79,11 @@ Este repositório apresenta o desenvolvimento de um Trabalho de Conclusão de Cu
 
 ## Georeferenciamento
 
-1. **Adição do objeto de georefência**:
+1. **Ativação do plugin Cesium for Unreal**:
+   - Em *Edit > Plugins*, marque *Cesium for Unreal* e reinicie o Editor.
+2. **Adição do objeto de georefência**:
    - Na cena, adicione o ator `CesiumGeoreference`, que gerencia a conversão de coordenadas.
-2. **Implementação em C++ (`AMyActor::Tick`)**:
+3. **Implementação em C++ (`AMyActor::Tick`)**:
    ```cpp
    if (ACesiumGeoreference* Georef = ACesiumGeoreference::GetDefaultGeoreference(GetWorld())) {
        double Latitude, Longitude, Height;
@@ -91,6 +93,8 @@ Este repositório apresenta o desenvolvimento de um Trabalho de Conclusão de Cu
        PC->GetHUDWidget()->SetLatLon(Latitude, Longitude);
    }
    ```
+4. **Visualização no HUD**:
+   - `UMyUserWidget` com dois `TextBlock` vinculados para exibir Latitude e Longitude atualizadas.
 
 ![HUD de Latitude e Longitude](Screenshot%20from%202025-04-18%2022-52-58.png)
 
@@ -98,6 +102,8 @@ Este repositório apresenta o desenvolvimento de um Trabalho de Conclusão de Cu
 
 ## Observações
 
+- O repositório está livre de arquivos de build ou caches.
+- Novos exemplos podem ser adicionados criando atores ou componentes que sigam os padrões mostrados.
 - Para detalhes do plugin rclUE: https://github.com/RobotecAI/rclUE
 - Para documentação Cesium for Unreal: https://github.com/CesiumGS/cesium-unreal
 
@@ -106,4 +112,6 @@ Este repositório apresenta o desenvolvimento de um Trabalho de Conclusão de Cu
 ## Contato
 
 - **E‑mail:** natanvaz27@unifei.edu.br
-- **LinkedIn:** https://www.linkedin.com/in/natao-vaz
+- **LinkedIn:** https://www.linkedin.com/in/natan-ferreira-rosa
+
+Este TCC demonstra a aplicação prática de middleware de robótica em ambientes simulados e georreferenciados, contribuindo para pesquisas em navegação autônoma e sistemas ciber-físicos.

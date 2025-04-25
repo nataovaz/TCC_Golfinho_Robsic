@@ -5,6 +5,8 @@
 #include "CampusPlayerController.generated.h"
 
 class UMyUserWidget;
+class UInputMappingContext;
+class UInputAction;
 
 /** PlayerController que instancia e mantém o HUD de LLA */
 UCLASS()
@@ -20,11 +22,26 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    virtual void SetupInputComponent() override;   // <── declare
 
     /** Classe do widget (definida via código ou no editor) */
     UPROPERTY(EditAnywhere, Category="HUD")
     TSubclassOf<UMyUserWidget> HUDWidgetClass;
 
+    /** Classe de Input Mapping Context (definida via código ou no editor) */
+    UPROPERTY(EditDefaultsOnly, Category="Input")
+    UInputMappingContext* IMC_GolfCart;
+
+    UPROPERTY(EditDefaultsOnly, Category="Input")
+    UInputAction* IA_MoveForward;
+
+    UPROPERTY(EditDefaultsOnly, Category="Input")
+    UInputAction* IA_MoveRight;
+
+    UFUNCTION() void OnIgnoreEscape();
+
+
 private:
-    UPROPERTY() UMyUserWidget* HUDWidget = nullptr;
+    UPROPERTY() 
+    UMyUserWidget* HUDWidget = nullptr;
 };
