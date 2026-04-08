@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "{A1E93229-08A2-4B8C-8ABB-17A343E0DA66}",
+	"EngineAssociation": "{C3700A80-31F9-4F60-9E5C-D0F4B9005251}",
 	"Category": "",
 	"Description": "",
 	"Modules": [
@@ -30,6 +30,10 @@
 				"Android",
 				"IOS"
 			]
+		},
+		{
+			"Name": "ChaosVehiclesPlugin",
+			"Enabled": true
 		}
 	],
 	"TargetPlatforms": [

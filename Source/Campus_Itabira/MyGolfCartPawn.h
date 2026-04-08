@@ -14,6 +14,8 @@
 #include "MyGolfCartPawn.generated.h"
 
 class UInputAction;
+class UPoseableMeshComponent;
+class USkeletalMeshComponent;
 
 /**
  * Pawn do carrinho de golfe.
@@ -54,6 +56,17 @@ private:
     UPROPERTY(VisibleAnywhere, meta=(AllowPrivateAccess="true"))
     UFloatingPawnMovement* MoveComp = nullptr;
 
+    /* ---------- Visual do carrinho ---------- */
+    UPROPERTY(Transient)
+    UPoseableMeshComponent* VisualCartMesh = nullptr;
+
+    UPROPERTY(Transient)
+    USkeletalMeshComponent* SourceCartMesh = nullptr;
+
+    FVector LastActorLocation = FVector::ZeroVector;
+    float WheelSpinDegrees = 0.f;
+    TMap<FName, FTransform> BaseWheelBoneTransforms;
+
     /* ---------- Enhanced Input ---------- */
     UPROPERTY(EditDefaultsOnly, Category="Input") UInputAction* IA_MoveForward = nullptr;
     UPROPERTY(EditDefaultsOnly, Category="Input") UInputAction* IA_MoveRight   = nullptr;
@@ -61,6 +74,9 @@ private:
     /* ---------- callbacks ---------- */
     void OnMoveForward(const FInputActionValue& Value);
     void OnMoveRight  (const FInputActionValue& Value);
+
+    void InitializeVisualCartMesh();
+    void UpdateVisualWheelSpin(float DeltaTime);
 
     /* ---------- ROS2 callback ---------- */
     UFUNCTION()

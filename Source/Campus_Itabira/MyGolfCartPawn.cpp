@@ -4,14 +4,27 @@
 #include "Msgs/ROS2PoseStamped.h"
 #include "CampusPlayerController.h"
 #include "MyUserWidget.h"
+#include "Ros2RuntimeGuard.h"
 
 #include "Components/CapsuleComponent.h"
+#include "Components/PoseableMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/FloatingPawnMovement.h"
+#include "GameFramework/PlayerController.h"
 #include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
+#include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+
+namespace
+{
+const FName WheelFrontLeft(TEXT("Wheel_Front_Left"));
+const FName WheelFrontRight(TEXT("Wheel_Front_Right"));
+const FName WheelRearLeft(TEXT("Wheel_Rear_Left"));
+const FName WheelRearRight(TEXT("Wheel_Rear_Right"));
+}
 
 
 AMyGolfCartPawn::AMyGolfCartPawn()
@@ -30,8 +43,8 @@ AMyGolfCartPawn::AMyGolfCartPawn()
 
     TopDownCam = CreateDefaultSubobject<UCameraComponent>(TEXT("TopDownCam"));
     TopDownCam->SetupAttachment(CamRoot);
-    TopDownCam->SetRelativeLocation({0.f, 0.f, 500.f});      // 5 m acima
-    TopDownCam->SetRelativeRotation({-90.f, 0.f, 0.f});      // olhando p/ baixo
+    TopDownCam->SetRelativeLocation({-220.f, 170.f, 430.f}); // deslocada para a direita para destacar a roda lateral
+    TopDownCam->SetRelativeRotation({-57.f, -32.f, 0.f});    // inclina e vira levemente para enquadrar o carrinho
     TopDownCam->bUsePawnControlRotation = false;
 
     /* ---------- Movimento ---------- */
@@ -40,6 +53,8 @@ AMyGolfCartPawn::AMyGolfCartPawn()
 
     /* ---------- ROS2 & Cesium ---------- */
     NodeComponent = CreateDefaultSubobject<UROS2NodeComponent>(TEXT("ROS2Node"));
+    NodeComponent->Name = TEXT("campus_itabira_golfcart");
+    NodeComponent->Namespace = TEXT("/campus_itabira");
     GlobeAnchor   = CreateDefaultSubobject<UCesiumGlobeAnchorComponent>(TEXT("GlobeAnchor"));
 }
 
@@ -48,16 +63,31 @@ void AMyGolfCartPawn::BeginPlay()
 {
     Super::BeginPlay();
 
-    /* ROS2  */
-    NodeComponent->Init();
-    PosePublisher = NodeComponent->CreatePublisher(
-        TEXT("/campus_pose"), UROS2Publisher::StaticClass(),
-        UROS2PoseStampedMsg::StaticClass());
+    LastActorLocation = GetActorLocation();
+    InitializeVisualCartMesh();
 
-    FSubscriptionCallback Cb; 
-    Cb.BindDynamic(this, &AMyGolfCartPawn::OnMessageReceived);
-    Subscriber = NodeComponent->CreateSubscriber(
-        TEXT("/teste_unreal"), UROS2StrMsg::StaticClass(), Cb);
+    /* ROS2  */
+    if (CampusRos2RuntimeGuard::CanInitializeRos2())
+    {
+        NodeComponent->Init();
+        PosePublisher = NodeComponent->CreatePublisher(
+            TEXT("/campus_pose"), UROS2Publisher::StaticClass(),
+            UROS2PoseStampedMsg::StaticClass());
+
+        FSubscriptionCallback Cb;
+        Cb.BindDynamic(this, &AMyGolfCartPawn::OnMessageReceived);
+        Subscriber = NodeComponent->CreateSubscriber(
+            TEXT("/teste_unreal"), UROS2StrMsg::StaticClass(), Cb);
+
+        UE_LOG(
+            LogTemp,
+            Log,
+            TEXT("Golf cart ROS setup | node_state=%d publisher=%s subscriber=%s"),
+            static_cast<int32>(NodeComponent ? NodeComponent->State.GetValue() : UROS2State::Created),
+            PosePublisher ? TEXT("ok") : TEXT("null"),
+            Subscriber ? TEXT("ok") : TEXT("null")
+        );
+    }
 
     /* Cesium  */
     if (ACesiumGeoreference* G = ACesiumGeoreference::GetDefaultGeoreference(GetWorld()))
@@ -80,6 +110,40 @@ void AMyGolfCartPawn::BeginPlay()
 void AMyGolfCartPawn::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
+
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        float ForwardInput = 0.f;
+        float RightInput = 0.f;
+
+        if (PC->IsInputKeyDown(EKeys::W) || PC->IsInputKeyDown(EKeys::Up))
+        {
+            ForwardInput += 1.f;
+        }
+        if (PC->IsInputKeyDown(EKeys::S) || PC->IsInputKeyDown(EKeys::Down))
+        {
+            ForwardInput -= 1.f;
+        }
+        if (PC->IsInputKeyDown(EKeys::D) || PC->IsInputKeyDown(EKeys::Right))
+        {
+            RightInput += 1.f;
+        }
+        if (PC->IsInputKeyDown(EKeys::A) || PC->IsInputKeyDown(EKeys::Left))
+        {
+            RightInput -= 1.f;
+        }
+
+        if (!FMath::IsNearlyZero(ForwardInput))
+        {
+            AddMovementInput(GetActorForwardVector(), ForwardInput);
+        }
+        if (!FMath::IsNearlyZero(RightInput))
+        {
+            AddMovementInput(GetActorRightVector(), RightInput);
+        }
+    }
+
+    UpdateVisualWheelSpin(DeltaTime);
     if (!PosePublisher) return;
 
     FROSPoseStamped Msg;
@@ -142,4 +206,113 @@ void AMyGolfCartPawn::EndPlay(const EEndPlayReason::Type Reason)
 {
     Super::EndPlay(Reason);
     /* Se necessário, finalize ROS 2, timers etc. */
+}
+
+void AMyGolfCartPawn::InitializeVisualCartMesh()
+{
+    if (VisualCartMesh)
+    {
+        return;
+    }
+
+    TArray<USkeletalMeshComponent*> SkeletalMeshes;
+    GetComponents(SkeletalMeshes);
+
+    USkeletalMeshComponent* SourceMesh = nullptr;
+    for (USkeletalMeshComponent* Candidate : SkeletalMeshes)
+    {
+        if (!Candidate || !Candidate->GetSkeletalMeshAsset())
+        {
+            continue;
+        }
+
+        SourceMesh = Candidate;
+        if (Candidate->GetName().Contains(TEXT("Golfinho")))
+        {
+            break;
+        }
+    }
+
+    if (!SourceMesh)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No skeletal mesh found on %s to drive golf cart wheel visuals."), *GetName());
+        return;
+    }
+
+    SourceCartMesh = SourceMesh;
+
+    VisualCartMesh = NewObject<UPoseableMeshComponent>(this, TEXT("VisualCartMesh"));
+    if (!VisualCartMesh)
+    {
+        return;
+    }
+
+    USceneComponent* AttachParent = SourceMesh->GetAttachParent();
+    const FName AttachSocket = SourceMesh->GetAttachSocketName();
+    if (!AttachParent)
+    {
+        AttachParent = RootComponent.Get();
+    }
+    VisualCartMesh->SetupAttachment(AttachParent, AttachSocket);
+    VisualCartMesh->RegisterComponent();
+    VisualCartMesh->SetRelativeTransform(SourceMesh->GetRelativeTransform());
+    VisualCartMesh->SetSkinnedAssetAndUpdate(SourceMesh->GetSkeletalMeshAsset(), false);
+    VisualCartMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    VisualCartMesh->SetCastShadow(SourceMesh->CastShadow);
+    VisualCartMesh->CopyPoseFromSkeletalComponent(SourceMesh);
+
+    BaseWheelBoneTransforms.Add(WheelFrontLeft, VisualCartMesh->GetBoneTransformByName(WheelFrontLeft, EBoneSpaces::ComponentSpace));
+    BaseWheelBoneTransforms.Add(WheelFrontRight, VisualCartMesh->GetBoneTransformByName(WheelFrontRight, EBoneSpaces::ComponentSpace));
+    BaseWheelBoneTransforms.Add(WheelRearLeft, VisualCartMesh->GetBoneTransformByName(WheelRearLeft, EBoneSpaces::ComponentSpace));
+    BaseWheelBoneTransforms.Add(WheelRearRight, VisualCartMesh->GetBoneTransformByName(WheelRearRight, EBoneSpaces::ComponentSpace));
+
+    const int32 NumMaterials = SourceMesh->GetNumMaterials();
+    for (int32 Index = 0; Index < NumMaterials; ++Index)
+    {
+        VisualCartMesh->SetMaterial(Index, SourceMesh->GetMaterial(Index));
+    }
+
+    SourceMesh->SetHiddenInGame(true, true);
+    SourceMesh->SetVisibility(false, true);
+}
+
+void AMyGolfCartPawn::UpdateVisualWheelSpin(float DeltaTime)
+{
+    if (!VisualCartMesh || DeltaTime <= KINDA_SMALL_NUMBER)
+    {
+        return;
+    }
+
+    if (SourceCartMesh)
+    {
+        VisualCartMesh->CopyPoseFromSkeletalComponent(SourceCartMesh);
+    }
+
+    const FVector CurrentLocation = GetActorLocation();
+    const float SpeedCmPerSecond = FVector::Dist(CurrentLocation, LastActorLocation) / DeltaTime;
+    LastActorLocation = CurrentLocation;
+
+    // Keeps wheel motion readable even when movement comes from teleports or GPS updates.
+    const float ClampedSpeed = FMath::Min(SpeedCmPerSecond, 5000.f);
+    WheelSpinDegrees = FMath::Fmod(WheelSpinDegrees + (ClampedSpeed * DeltaTime * 0.4f), 360.f);
+
+    auto ApplyWheelRotation = [this](const FName BoneName)
+    {
+        const FTransform* BaseTransform = BaseWheelBoneTransforms.Find(BoneName);
+        if (!BaseTransform)
+        {
+            return;
+        }
+
+        FTransform WheelTransform = *BaseTransform;
+        const FVector WheelAxis = BaseTransform->GetRotation().RotateVector(FVector::RightVector).GetSafeNormal();
+        const FQuat SpinQuat(WheelAxis, FMath::DegreesToRadians(WheelSpinDegrees));
+        WheelTransform.SetRotation((SpinQuat * BaseTransform->GetRotation()).GetNormalized());
+        VisualCartMesh->SetBoneTransformByName(BoneName, WheelTransform, EBoneSpaces::ComponentSpace);
+    };
+
+    ApplyWheelRotation(WheelFrontLeft);
+    ApplyWheelRotation(WheelFrontRight);
+    ApplyWheelRotation(WheelRearLeft);
+    ApplyWheelRotation(WheelRearRight);
 }

@@ -40,4 +40,5 @@
 .DS_Store
 Thumbs.db
 
-# Manter apenas o essencial para rodar o projeto e o exemplo Hello World
+# Manter apenas o essencial para rodar o projeto e o exemplo Hello World*.sqlite
+*.pdf

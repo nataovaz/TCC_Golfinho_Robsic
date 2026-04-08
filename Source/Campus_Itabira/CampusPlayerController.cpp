@@ -1,26 +1,24 @@
 #include "CampusPlayerController.h"
 #include "MyUserWidget.h"
-#include "UObject/ConstructorHelpers.h"
 
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
+#include "UObject/SoftObjectPath.h"
 
 ACampusPlayerController::ACampusPlayerController()
 {
-    // Atribui automaticamente o Blueprint WB_GolfinhoHUD
-    static ConstructorHelpers::FClassFinder<UMyUserWidget> HudBP(
-        TEXT("/Game/WB_GolfinhoHUD"));            // ajuste o path se diferente
-    if (HudBP.Succeeded())
+    const FSoftClassPath HudWidgetPath(TEXT("/Game/WB_GolfinhoHUD.WB_GolfinhoHUD_C"));
+    if (UClass* LoadedHudWidgetClass = HudWidgetPath.TryLoadClass<UMyUserWidget>())
     {
-        HUDWidgetClass = HudBP.Class;
+        HUDWidgetClass = LoadedHudWidgetClass;
     }
 
-    static ConstructorHelpers::FObjectFinder<UInputMappingContext> 
-        IMCObj(TEXT("/Game/IMC_Golfinho.IMC_Golfinho"));
-    if (IMCObj.Succeeded()) {
-        IMC_GolfCart = IMCObj.Object;
+    const FSoftObjectPath InputMappingContextPath(TEXT("/Game/IMC_Golfinho.IMC_Golfinho"));
+    if (UObject* LoadedInputMappingContext = InputMappingContextPath.TryLoad())
+    {
+        IMC_GolfCart = Cast<UInputMappingContext>(LoadedInputMappingContext);
     }
 }
 
@@ -30,14 +28,21 @@ void ACampusPlayerController::BeginPlay()
     UE_LOG(LogTemp, Warning, TEXT("CampusPlayerController::BeginPlay disparou"));
 
     // Adiciona o mapping context ao subsistema do Enhanced Input
-    if (UEnhancedInputLocalPlayerSubsystem* Sub = 
+    if (UEnhancedInputLocalPlayerSubsystem* Sub =
          ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer())) {
-       Sub->AddMappingContext(IMC_GolfCart, 0);
+        if (IMC_GolfCart)
+        {
+            Sub->AddMappingContext(IMC_GolfCart, 0);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("IMC_GolfCart nao encontrado; o carrinho iniciara sem input mapeado."));
+        }
     }
 
     if (!HUDWidgetClass)
     {
-        UE_LOG(LogTemp, Error, TEXT("HUDWidgetClass está NULO."));
+        UE_LOG(LogTemp, Warning, TEXT("HUDWidgetClass nao encontrado; o HUD nao sera criado."));
         return;
     }
 
