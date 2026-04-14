@@ -23,16 +23,19 @@ class CAMPUS_ITABIRA_API AMyActor : public AActor
 public:
     AMyActor();
 
+    /** Texto formatado com Lat/Lon/X/Y/Heading/Vel — lido pelo ALocalizacaoHUD */
+    FString DisplayText;
+
 protected:
     virtual void BeginPlay() override;
     virtual void Tick(float DeltaTime) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 
 private:
-    /* -------- ROS 2 -------- */
-    UPROPERTY() UROS2NodeComponent* NodeComponent = nullptr;
-    UPROPERTY() UROS2Publisher*     PosePublisher = nullptr;
-    UPROPERTY() UROS2Subscriber*    Subscriber    = nullptr;
+    /* -------- ROS 2 -------- */
+    UPROPERTY() UROS2NodeComponent* NodeComponent      = nullptr;
+    UPROPERTY() UROS2Publisher*     PosePublisher      = nullptr;
+    UPROPERTY() UROS2Subscriber*    DisplaySubscriber  = nullptr;
 
     /* -------- Cesium ------- */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly,
@@ -41,7 +44,12 @@ private:
 
     ACesiumGeoreference* Georef = nullptr;
 
-    /* -------- Callback ----- */
+    /* -------- Última posição recebida ----- */
+    double LastLat = 0.0;
+    double LastLon = 0.0;
+    bool   bHasFix = false;
+
+    /* -------- Callbacks ----- */
     UFUNCTION()
-    void OnMessageReceived(const UROS2GenericMsg* InMsg);
+    void OnDisplayReceived(const UROS2GenericMsg* InMsg);
 };

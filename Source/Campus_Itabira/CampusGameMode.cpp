@@ -2,6 +2,7 @@
 #include "CampusGameMode.h"
 #include "MyGolfCartPawn.h"
 #include "CampusPlayerController.h"
+#include "LocalizacaoHUD.h"
 // #include "Engine/PlayerStart.h"
 #include "GameFramework/PlayerStart.h"
 #include "Kismet/GameplayStatics.h"
@@ -10,6 +11,7 @@ ACampusGameMode::ACampusGameMode()
 {
     DefaultPawnClass      = AMyGolfCartPawn::StaticClass();
     PlayerControllerClass = ACampusPlayerController::StaticClass();
+    HUDClass              = ALocalizacaoHUD::StaticClass();
 }
 
 AActor* ACampusGameMode::ChoosePlayerStart_Implementation(AController* PC)
