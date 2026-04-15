@@ -13,9 +13,10 @@ public class Campus_Itabira : ModuleRules
             "CoreUObject",
             "Engine",
             "InputCore",
-            "EnhancedInput",    // ← aqui!
+            "EnhancedInput",
             "rclUE",
-            "CesiumRuntime"
+            "CesiumRuntime",
+            "UMG"
         });
 
 

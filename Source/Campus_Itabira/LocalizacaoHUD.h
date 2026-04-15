@@ -5,9 +5,9 @@
 #include "LocalizacaoHUD.generated.h"
 
 /**
- * HUD puro em C++ — exibe dados do EKF (Lat, Lon, X, Y, Heading, Vel)
- * sem necessidade de Widget Blueprint.
- * Atualizado via AMyActor::DisplayText.
+ * HUD em C++ — exibe painel de dados EKF no canto superior esquerdo:
+ *   Lat, Lon, X, Y, Heading, Vel
+ * (Mini-mapa Google Maps removido — causava lag por HTTP a cada 5s.)
  */
 UCLASS()
 class CAMPUS_ITABIRA_API ALocalizacaoHUD : public AHUD

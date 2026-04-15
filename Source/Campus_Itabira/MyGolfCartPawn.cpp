@@ -1,5 +1,6 @@
 // MyGolfCartPawn.cpp ---------------------------------------------------------
 #include "MyGolfCartPawn.h"
+#include "CesiumSampleHeightResult.h"
 #include "Msgs/ROS2Str.h"
 #include "Msgs/ROS2PoseStamped.h"
 #include "CampusPlayerController.h"
@@ -15,6 +16,7 @@
 #include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
+#include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 
@@ -24,6 +26,16 @@ const FName WheelFrontLeft(TEXT("Wheel_Front_Left"));
 const FName WheelFrontRight(TEXT("Wheel_Front_Right"));
 const FName WheelRearLeft(TEXT("Wheel_Rear_Left"));
 const FName WheelRearRight(TEXT("Wheel_Rear_Right"));
+const FName GoogleTilesetTag(TEXT("CampusGooglePhotorealisticTiles"));
+constexpr double kFallbackHeightMeters = 850.0;   // altitude WGS-84 segura acima do terreno de Itabira-MG
+constexpr double kCartHeightOffsetMeters = 1.25;
+constexpr double kGroundSampleMinMoveDegrees = 0.00002;
+constexpr double kSampleComparisonEpsilonDegrees = 1e-6;
+constexpr float kGroundSampleIntervalSeconds = 1.0f;
+// Delay maior: permite ao motor estabilizar antes de inicializar ROS e Cesium,
+// reduzindo o pico de CPU/RAM que trava o desktop no startup.
+constexpr float kDeferredRosInitDelaySeconds = 2.0f;
+constexpr float kInitialGroundSampleDelaySeconds = 4.0f;
 }
 
 
@@ -64,34 +76,50 @@ void AMyGolfCartPawn::BeginPlay()
     Super::BeginPlay();
 
     LastActorLocation = GetActorLocation();
+    DisplayText = TEXT("Aguardando GPS fix...");
     InitializeVisualCartMesh();
 
     /* ROS2  */
     if (CampusRos2RuntimeGuard::CanInitializeRos2())
     {
-        NodeComponent->Init();
-        PosePublisher = NodeComponent->CreatePublisher(
-            TEXT("/campus_pose"), UROS2Publisher::StaticClass(),
-            UROS2PoseStampedMsg::StaticClass());
-
-        FSubscriptionCallback Cb;
-        Cb.BindDynamic(this, &AMyGolfCartPawn::OnMessageReceived);
-        Subscriber = NodeComponent->CreateSubscriber(
-            TEXT("/teste_unreal"), UROS2StrMsg::StaticClass(), Cb);
-
-        UE_LOG(
-            LogTemp,
-            Log,
-            TEXT("Golf cart ROS setup | node_state=%d publisher=%s subscriber=%s"),
-            static_cast<int32>(NodeComponent ? NodeComponent->State.GetValue() : UROS2State::Created),
-            PosePublisher ? TEXT("ok") : TEXT("null"),
-            Subscriber ? TEXT("ok") : TEXT("null")
-        );
+        GetWorldTimerManager().SetTimer(
+            DeferredRosInitTimerHandle,
+            this,
+            &AMyGolfCartPawn::InitializeRosInterfaces,
+            kDeferredRosInitDelaySeconds,
+            false);
     }
 
     /* Cesium  */
     if (ACesiumGeoreference* G = ACesiumGeoreference::GetDefaultGeoreference(GetWorld()))
+    {
+        Georef = G;
         GlobeAnchor->SetGeoreference(G);
+
+        const FVector OriginLLH = G->GetOriginLongitudeLatitudeHeight();
+        UE_LOG(LogTemp, Display,
+            TEXT("[DIAG] CesiumGeoreference origin: Lon=%.8f Lat=%.8f Height=%.2f"),
+            OriginLLH.X, OriginLLH.Y, OriginLLH.Z);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DIAG] CesiumGeoreference NAO encontrado!"));
+    }
+
+    // Posição do ator no mundo Unreal antes de qualquer teleporte
+    const FVector WorldPos = GetActorLocation();
+    UE_LOG(LogTemp, Display,
+        TEXT("[DIAG] Cart world pos inicial (cm): X=%.1f Y=%.1f Z=%.1f"),
+        WorldPos.X, WorldPos.Y, WorldPos.Z);
+
+    GroundTileset = ResolveGroundTileset();
+
+    // Inicializa as variáveis de estado GPS sem mover o ator.
+    // O carrinho nasce onde foi posicionado no editor (no chão do modelo 3D).
+    // Altura fixa = kFallbackHeightMeters (850 m WGS-84 sobre Itabira).
+    // SampleHeightMostDetailed desativado — forçava carregamento de tiles em
+    // resolução máxima, causando pico de CPU/GPU e travamento do PC.
+    InitSpawnStateOnly();
 
     /* Garante que esta câmera seja a ativa  */
     TopDownCam->Activate();
@@ -104,6 +132,37 @@ void AMyGolfCartPawn::BeginPlay()
                 PC->SetViewTarget(this, FViewTargetTransitionParams());
         },
         0.01f, false);
+}
+
+void AMyGolfCartPawn::InitializeRosInterfaces()
+{
+    if (bRosInterfacesInitialized || !NodeComponent)
+    {
+        return;
+    }
+
+    NodeComponent->Init();
+    PosePublisher = NodeComponent->CreatePublisher(
+        TEXT("/campus_pose"),
+        UROS2Publisher::StaticClass(),
+        UROS2PoseStampedMsg::StaticClass());
+
+    FSubscriptionCallback Callback;
+    Callback.BindDynamic(this, &AMyGolfCartPawn::OnMessageReceived);
+    Subscriber = NodeComponent->CreateSubscriber(
+        TEXT("/localizacao_display"),
+        UROS2StrMsg::StaticClass(),
+        Callback);
+
+    bRosInterfacesInitialized = PosePublisher != nullptr || Subscriber != nullptr;
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT("Golf cart ROS setup | node_state=%d publisher=%s subscriber=%s"),
+        static_cast<int32>(NodeComponent->State.GetValue()),
+        PosePublisher ? TEXT("ok") : TEXT("null"),
+        Subscriber ? TEXT("ok") : TEXT("null"));
 }
 
 // TICK: publica pose ROS2 + atualiza HUD 
@@ -144,6 +203,28 @@ void AMyGolfCartPawn::Tick(float DeltaTime)
     }
 
     UpdateVisualWheelSpin(DeltaTime);
+
+    // ── Interpolação suave de posição GPS (10 Hz → 60 Hz) ──────────────────
+    // Lerp da posição atual até o destino a cada frame para eliminar saltos.
+    if (bHasTarget && GlobeAnchor)
+    {
+        constexpr double kLerpSpeed = 8.0;   // converge em ~3 frames a 60 fps
+        const double Alpha = FMath::Min(1.0, kLerpSpeed * static_cast<double>(DeltaTime));
+
+        const double NewLat = LastLat + Alpha * (TargetLat - LastLat);
+        const double NewLon = LastLon + Alpha * (TargetLon - LastLon);
+
+        const bool bLatChanged = !FMath::IsNearlyEqual(NewLat, LastLat, 1e-9);
+        const bool bLonChanged = !FMath::IsNearlyEqual(NewLon, LastLon, 1e-9);
+
+        if (bLatChanged || bLonChanged)
+        {
+            LastLat = NewLat;
+            LastLon = NewLon;
+            MoveCartToLongitudeLatitudeHeight(LastLon, LastLat, LastAppliedHeight + kCartHeightOffsetMeters);
+        }
+    }
+
     if (!PosePublisher) return;
 
     FROSPoseStamped Msg;
@@ -194,18 +275,84 @@ void AMyGolfCartPawn::OnMoveRight(const FInputActionValue& V)
 // ─────────── ROS2 callback --------------------------------------------------
 void AMyGolfCartPawn::OnMessageReceived(const UROS2GenericMsg* In)
 {
-    if (auto* M = Cast<UROS2StrMsg>(In))
+    const auto* Msg = Cast<UROS2StrMsg>(In);
+    if (!Msg)
     {
-        FROSStr D; M->GetMsg(D);
-        UE_LOG(LogTemp, Display, TEXT("ROS2 msg: %s"), *D.Data);
+        return;
     }
+
+    FROSStr Data;
+    Msg->GetMsg(Data);
+
+    DisplayText = Data.Data;
+
+    TArray<FString> Lines;
+    Data.Data.ParseIntoArray(Lines, TEXT("\n"), true);
+
+    double NewLat = LastLat;
+    double NewLon = LastLon;
+
+    for (const FString& Line : Lines)
+    {
+        FString Key;
+        FString Val;
+        if (!Line.Split(TEXT(": "), &Key, &Val))
+        {
+            continue;
+        }
+
+        Key.TrimStartAndEndInline();
+        Val.TrimStartAndEndInline();
+
+        if (Key.Equals(TEXT("Lat")))
+        {
+            NewLat = FCString::Atod(*Val);
+        }
+        else if (Key.Equals(TEXT("Lon")))
+        {
+            NewLon = FCString::Atod(*Val);
+        }
+    }
+
+    if (NewLat == 0.0 || NewLon == 0.0)
+    {
+        return;
+    }
+
+    // Seta destino para interpolação suave no Tick — evita saltos a 10 Hz
+    TargetLat  = NewLat;
+    TargetLon  = NewLon;
+    bHasTarget = true;
+    bHasFix    = true;
+
+    UE_LOG(LogTemp, Display, TEXT("[MyGolfCartPawn] Posicao: Lat=%.6f Lon=%.6f"), NewLat, NewLon);
 }
 
 // ─────────── ENDPLAY --------------------------------------------------------
 void AMyGolfCartPawn::EndPlay(const EEndPlayReason::Type Reason)
 {
+    // Limpa timers antes de qualquer outra coisa.
+    GetWorldTimerManager().ClearAllTimersForObject(this);
+
+    // Destrói subscriber e publisher explicitamente para liberar
+    // recursos rcl/DDS antes que o NodeComponent seja destruído.
+    // Sem isso, o executor do rclUE pode ficar em loop infinito e
+    // travar o editor/PC ao fechar o projeto.
+    if (IsValid(Subscriber))
+    {
+        Subscriber->Destroy();
+        Subscriber = nullptr;
+    }
+    if (IsValid(PosePublisher))
+    {
+        PosePublisher->Destroy();
+        PosePublisher = nullptr;
+    }
+
+    // Marca como não inicializado para evitar re-entradas.
+    bRosInterfacesInitialized = false;
+
     Super::EndPlay(Reason);
-    /* Se necessário, finalize ROS 2, timers etc. */
 }
 
 void AMyGolfCartPawn::InitializeVisualCartMesh()
@@ -315,4 +462,298 @@ void AMyGolfCartPawn::UpdateVisualWheelSpin(float DeltaTime)
     ApplyWheelRotation(WheelFrontRight);
     ApplyWheelRotation(WheelRearLeft);
     ApplyWheelRotation(WheelRearRight);
+}
+
+void AMyGolfCartPawn::InitSpawnStateOnly()
+{
+    // Prioridade: deriva GPS diretamente do GlobeAnchor (posição real do ator
+    // no editor + CesiumGeoreference). Evita usar UPROPERTYs que o Blueprint
+    // pode ter em cache com valores antigos, causando salto visual no início.
+    if (GlobeAnchor && Georef)
+    {
+        const FVector LLH = GlobeAnchor->GetLongitudeLatitudeHeight();
+        if (!FMath::IsNearlyZero(LLH.Y) && !FMath::IsNearlyZero(LLH.X))
+        {
+            LastLon           = LLH.X;
+            LastLat           = LLH.Y;
+            LastAppliedHeight = (LLH.Z > 100.0) ? LLH.Z : kFallbackHeightMeters;
+            UE_LOG(LogTemp, Display,
+                TEXT("[MyGolfCartPawn] Estado GPS derivado do GlobeAnchor: Lat=%.6f Lon=%.6f Height=%.1f"),
+                LastLat, LastLon, LastAppliedHeight);
+            return;
+        }
+    }
+
+    // Fallback: usa UPROPERTYs configuráveis
+    if (bUseCustomSpawnLocation)
+    {
+        LastLat = InitialSpawnLat;
+        LastLon = InitialSpawnLon;
+        LastAppliedHeight = (InitialSpawnHeight > 0.0)
+            ? InitialSpawnHeight
+            : kFallbackHeightMeters;
+    }
+    else if (Georef)
+    {
+        const FVector O = Georef->GetOriginLongitudeLatitudeHeight();
+        LastLon           = O.X;
+        LastLat           = O.Y;
+        LastAppliedHeight = O.Z > 0.0 ? O.Z : kFallbackHeightMeters;
+    }
+    else
+    {
+        LastAppliedHeight = kFallbackHeightMeters;
+    }
+
+    UE_LOG(LogTemp, Display,
+        TEXT("[MyGolfCartPawn] Estado GPS inicializado (fallback UPROPERTY): Lat=%.6f Lon=%.6f Height=%.1f"),
+        LastLat, LastLon, LastAppliedHeight);
+}
+
+void AMyGolfCartPawn::SpawnAtGeoreferenceOrigin()
+{
+    if (!GlobeAnchor || !Georef)
+    {
+        return;
+    }
+
+    if (bUseCustomSpawnLocation)
+    {
+        // Usa coordenadas configuráveis (padrão: Entrada da UNIFEI Itabira).
+        LastLat = InitialSpawnLat;
+        LastLon = InitialSpawnLon;
+
+        // Resolve altura: prioridade → UPROPERTY → origem do Georef → fallback.
+        if (InitialSpawnHeight > 0.0)
+        {
+            LastAppliedHeight = InitialSpawnHeight;
+        }
+        else
+        {
+            const FVector OriginLlh = Georef->GetOriginLongitudeLatitudeHeight();
+            LastAppliedHeight = OriginLlh.Z > 0.0 ? OriginLlh.Z : kFallbackHeightMeters;
+        }
+
+        UE_LOG(
+            LogTemp,
+            Display,
+            TEXT("[MyGolfCartPawn] Spawn em posicao customizada (rua): Lat=%.6f Lon=%.6f Height=%.1f"),
+            LastLat,
+            LastLon,
+            LastAppliedHeight);
+    }
+    else
+    {
+        // Comportamento original: nasce na origem do CesiumGeoreference.
+        const FVector OriginLlh = Georef->GetOriginLongitudeLatitudeHeight();
+        LastLon = OriginLlh.X;
+        LastLat = OriginLlh.Y;
+        LastAppliedHeight = OriginLlh.Z > 0.0 ? OriginLlh.Z : kFallbackHeightMeters;
+
+        UE_LOG(
+            LogTemp,
+            Display,
+            TEXT("[MyGolfCartPawn] Spawn na origem do CesiumGeoreference: Lon=%.6f Lat=%.6f Height=%.1f"),
+            LastLon,
+            LastLat,
+            LastAppliedHeight);
+    }
+
+    MoveCartToLongitudeLatitudeHeight(
+        LastLon,
+        LastLat,
+        LastAppliedHeight + kCartHeightOffsetMeters);
+}
+
+void AMyGolfCartPawn::RequestInitialGroundSample()
+{
+    MaybeRequestGroundHeightSample(LastLon, LastLat, true);
+}
+
+ACesium3DTileset* AMyGolfCartPawn::ResolveGroundTileset()
+{
+    if (IsValid(GroundTileset))
+    {
+        return GroundTileset;
+    }
+
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        return nullptr;
+    }
+
+    ACesium3DTileset* FallbackTileset = nullptr;
+
+    for (TActorIterator<ACesium3DTileset> It(World); It; ++It)
+    {
+        ACesium3DTileset* Tileset = *It;
+        if (!IsValid(Tileset))
+        {
+            continue;
+        }
+
+        if (Tileset->ActorHasTag(GoogleTilesetTag) ||
+            Tileset->GetUrl().Contains(TEXT("tile.googleapis.com")))
+        {
+            GroundTileset = Tileset;
+            break;
+        }
+
+        if (!FallbackTileset)
+        {
+            FallbackTileset = Tileset;
+        }
+    }
+
+    if (!GroundTileset)
+    {
+        GroundTileset = FallbackTileset;
+    }
+
+    if (GroundTileset)
+    {
+        UE_LOG(
+            LogTemp,
+            Display,
+            TEXT("[MyGolfCartPawn] Tileset de solo resolvido: %s"),
+            *GroundTileset->GetName());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MyGolfCartPawn] Nenhum Cesium3DTileset encontrado para amostrar altura."));
+    }
+
+    return GroundTileset;
+}
+
+void AMyGolfCartPawn::RequestGroundHeightSample(double Longitude, double Latitude)
+{
+    if (bHeightSampleInFlight)
+    {
+        return;
+    }
+
+    ACesium3DTileset* Tileset = ResolveGroundTileset();
+    if (!Tileset)
+    {
+        LastAppliedHeight = kFallbackHeightMeters;
+        return;
+    }
+
+    bHeightSampleInFlight = true;
+    LastSampleRequestLon = Longitude;
+    LastSampleRequestLat = Latitude;
+    LastGroundSampleRequestTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+
+    TArray<FVector> Positions;
+    Positions.Add(FVector(Longitude, Latitude, LastAppliedHeight));
+
+    TWeakObjectPtr<AMyGolfCartPawn> WeakThis(this);
+    FCesiumSampleHeightMostDetailedCallback Callback;
+    Callback.BindLambda(
+        [WeakThis, Longitude, Latitude](
+            ACesium3DTileset* /*TilesetActor*/,
+            const TArray<FCesiumSampleHeightResult>& Results,
+            const TArray<FString>& Warnings)
+        {
+            AMyGolfCartPawn* Self = WeakThis.Get();
+            if (!Self)
+            {
+                return;
+            }
+
+            Self->bHeightSampleInFlight = false;
+
+            double SampledHeight = Self->LastAppliedHeight;
+            if (Results.Num() > 0 && Results[0].SampleSuccess)
+            {
+                SampledHeight = Results[0].LongitudeLatitudeHeight.Z;
+                Self->LastAppliedHeight = SampledHeight;
+            }
+            else if (Self->LastAppliedHeight <= 0.0)
+            {
+                Self->LastAppliedHeight = kFallbackHeightMeters;
+                SampledHeight = Self->LastAppliedHeight;
+            }
+
+            if (Warnings.Num() > 0)
+            {
+                UE_LOG(
+                    LogTemp,
+                    Warning,
+                    TEXT("[MyGolfCartPawn] Avisos ao amostrar altura do tileset: %s"),
+                    *FString::Join(Warnings, TEXT(" | ")));
+            }
+
+            const bool bSampleStillCurrent =
+                FMath::IsNearlyEqual(Longitude, Self->LastLon, kSampleComparisonEpsilonDegrees) &&
+                FMath::IsNearlyEqual(Latitude, Self->LastLat, kSampleComparisonEpsilonDegrees);
+
+            if (bSampleStillCurrent)
+            {
+                Self->MoveCartToLongitudeLatitudeHeight(
+                    Self->LastLon,
+                    Self->LastLat,
+                    Self->LastAppliedHeight + kCartHeightOffsetMeters);
+            }
+        });
+
+    Tileset->SampleHeightMostDetailed(Positions, Callback);
+}
+
+void AMyGolfCartPawn::MaybeRequestGroundHeightSample(
+    double Longitude,
+    double Latitude,
+    bool bForce)
+{
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        return;
+    }
+
+    if (World->GetTimeSeconds() < kInitialGroundSampleDelaySeconds && !bForce)
+    {
+        return;
+    }
+
+    if (bHeightSampleInFlight)
+    {
+        return;
+    }
+
+    const bool bMovedEnough =
+        FMath::Abs(Longitude - LastSampleRequestLon) + FMath::Abs(Latitude - LastSampleRequestLat) >
+        kGroundSampleMinMoveDegrees;
+    const bool bIntervalElapsed =
+        (World->GetTimeSeconds() - LastGroundSampleRequestTime) >= kGroundSampleIntervalSeconds;
+
+    if (bForce || (bMovedEnough && bIntervalElapsed))
+    {
+        RequestGroundHeightSample(Longitude, Latitude);
+    }
+}
+
+void AMyGolfCartPawn::MoveCartToLongitudeLatitudeHeight(
+    double Longitude,
+    double Latitude,
+    double Height)
+{
+    if (!GlobeAnchor)
+    {
+        return;
+    }
+
+    GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(Longitude, Latitude, Height));
+
+    static bool bFirstTeleportLog = true;
+    if (bFirstTeleportLog)
+    {
+        bFirstTeleportLog = false;
+        const FVector After = GetActorLocation();
+        UE_LOG(LogTemp, Display,
+            TEXT("[DIAG] Pos apos GlobeAnchor teleporte (cm): X=%.1f Y=%.1f Z=%.1f"),
+            After.X, After.Y, After.Z);
+    }
 }

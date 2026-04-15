@@ -6,6 +6,7 @@
 #include "CampusPlayerController.h"
 #include "MyUserWidget.h"
 #include "Ros2RuntimeGuard.h"
+#include "TimerManager.h"
 
 AMyActor::AMyActor()
 {
@@ -29,24 +30,12 @@ void AMyActor::BeginPlay()
     /* ---------- ROS2 ---------- */
     if (CampusRos2RuntimeGuard::CanInitializeRos2())
     {
-        NodeComponent->Init();
-
-        // Publisher de pose (mantido para log/debug)
-        PosePublisher = NodeComponent->CreatePublisher(
-            TEXT("/campus_pose"),
-            UROS2Publisher::StaticClass(),
-            UROS2PoseStampedMsg::StaticClass());
-
-        // Subscriber do display EKF — recebe Lat/Lon/X/Y/Heading/Vel como String
-        FSubscriptionCallback Cb;
-        Cb.BindDynamic(this, &AMyActor::OnDisplayReceived);
-
-        DisplaySubscriber = NodeComponent->CreateSubscriber(
-            TEXT("/localizacao_display"),
-            UROS2StrMsg::StaticClass(),
-            Cb);
-
-        UE_LOG(LogTemp, Warning, TEXT("[MyActor] Subscriber /localizacao_display criado."));
+        GetWorldTimerManager().SetTimer(
+            DeferredRosInitTimerHandle,
+            this,
+            &AMyActor::InitializeRosInterfaces,
+            0.05f,
+            false);
     }
 
     /* ---------- Cesium ---------- */
@@ -97,7 +86,38 @@ void AMyActor::Tick(float DeltaTime)
 
 void AMyActor::EndPlay(const EEndPlayReason::Type Reason)
 {
+    GetWorldTimerManager().ClearTimer(DeferredRosInitTimerHandle);
     Super::EndPlay(Reason);
+}
+
+void AMyActor::InitializeRosInterfaces()
+{
+    if (bRosInterfacesInitialized || !NodeComponent)
+    {
+        return;
+    }
+
+    NodeComponent->Init();
+    PosePublisher = NodeComponent->CreatePublisher(
+        TEXT("/campus_pose"),
+        UROS2Publisher::StaticClass(),
+        UROS2PoseStampedMsg::StaticClass());
+
+    FSubscriptionCallback Callback;
+    Callback.BindDynamic(this, &AMyActor::OnDisplayReceived);
+    DisplaySubscriber = NodeComponent->CreateSubscriber(
+        TEXT("/localizacao_display"),
+        UROS2StrMsg::StaticClass(),
+        Callback);
+
+    bRosInterfacesInitialized = PosePublisher != nullptr || DisplaySubscriber != nullptr;
+
+    UE_LOG(
+        LogTemp,
+        Warning,
+        TEXT("[MyActor] ROS setup concluido | publisher=%s subscriber=%s"),
+        PosePublisher ? TEXT("ok") : TEXT("null"),
+        DisplaySubscriber ? TEXT("ok") : TEXT("null"));
 }
 
 // ── Callback: recebe "/localizacao_display" ────────────────────────────────
@@ -150,7 +170,7 @@ void AMyActor::OnDisplayReceived(const UROS2GenericMsg* InMsg)
 
         // Move o ator para a posição GPS estimada pelo EKF
         if (GlobeAnchor)
-            GlobeAnchor->MoveToLongitudeLatitudeHeight(NewLon, NewLat, CurrentAlt);
+            GlobeAnchor->MoveToLongitudeLatitudeHeight(FVector(NewLon, NewLat, CurrentAlt));
 
         UE_LOG(LogTemp, Display, TEXT("[MyActor] Posição: Lat=%.6f Lon=%.6f"), NewLat, NewLon);
     }

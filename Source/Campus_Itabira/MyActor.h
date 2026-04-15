@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "TimerManager.h"
 
 #include "ROS2NodeComponent.h"
 #include "ROS2Publisher.h"
@@ -26,6 +27,11 @@ public:
     /** Texto formatado com Lat/Lon/X/Y/Heading/Vel — lido pelo ALocalizacaoHUD */
     FString DisplayText;
 
+    /** Última posição GPS recebida — lida pelo ALocalizacaoHUD para o mini-mapa */
+    double LastLat = 0.0;
+    double LastLon = 0.0;
+    bool   bHasFix = false;
+
 protected:
     virtual void BeginPlay() override;
     virtual void Tick(float DeltaTime) override;
@@ -36,6 +42,8 @@ private:
     UPROPERTY() UROS2NodeComponent* NodeComponent      = nullptr;
     UPROPERTY() UROS2Publisher*     PosePublisher      = nullptr;
     UPROPERTY() UROS2Subscriber*    DisplaySubscriber  = nullptr;
+    FTimerHandle DeferredRosInitTimerHandle;
+    bool bRosInterfacesInitialized = false;
 
     /* -------- Cesium ------- */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly,
@@ -44,12 +52,9 @@ private:
 
     ACesiumGeoreference* Georef = nullptr;
 
-    /* -------- Última posição recebida ----- */
-    double LastLat = 0.0;
-    double LastLon = 0.0;
-    bool   bHasFix = false;
-
     /* -------- Callbacks ----- */
+    void InitializeRosInterfaces();
+
     UFUNCTION()
     void OnDisplayReceived(const UROS2GenericMsg* InMsg);
 };
