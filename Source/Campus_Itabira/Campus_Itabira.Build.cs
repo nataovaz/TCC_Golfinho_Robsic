@@ -7,6 +7,7 @@ public class Campus_Itabira : ModuleRules
     public Campus_Itabira(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+        bEnableExceptions = true;
         
         PublicDependencyModuleNames.AddRange(new string[] {
             "Core",

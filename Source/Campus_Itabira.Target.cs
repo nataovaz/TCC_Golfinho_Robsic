@@ -7,6 +7,7 @@ public class Campus_ItabiraTarget : TargetRules
     {
         Type = TargetType.Game;
         DefaultBuildSettings = BuildSettingsVersion.V4;
+        bForceEnableExceptions = true;
 
         ExtraModuleNames.AddRange(new string[] { "Campus_Itabira" });
         // Remova as linhas referentes a RTTI/exceções!

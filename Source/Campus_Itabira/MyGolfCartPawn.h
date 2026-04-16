@@ -12,6 +12,7 @@
 #include "CesiumGeoreference.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/FloatingPawnMovement.h"
+#include "HAL/CriticalSection.h"
 
 #include "MyGolfCartPawn.generated.h"
 
@@ -45,6 +46,8 @@ public:
     /** Destino para interpolação suave de posição (evita saltos a 10 Hz). */
     double TargetLat = 0.0;
     double TargetLon = 0.0;
+    double LastHeadingDeg = 0.0;
+    double TargetHeadingDeg = 0.0;
     bool bHasTarget = false;
 
     /**
@@ -82,6 +85,7 @@ private:
     /* ---------- ROS2 ---------- */
     UPROPERTY() UROS2NodeComponent* NodeComponent = nullptr;
     UPROPERTY() UROS2Publisher*     PosePublisher = nullptr;
+    UPROPERTY() UROS2Publisher*     StatePublisher = nullptr;
     UPROPERTY() UROS2Subscriber*    Subscriber    = nullptr;
     FTimerHandle DeferredRosInitTimerHandle;
     bool bRosInterfacesInitialized = false;
@@ -114,9 +118,17 @@ private:
     double LastAppliedHeight = 850.0;
     double LastSampleRequestLon = 0.0;
     double LastSampleRequestLat = 0.0;
+    double BaseActorYawDeg = 0.0;
     float LastGroundSampleRequestTime = -1000.f;
+    float LastStatePublishTimeSeconds = -1000.f;
     bool bHeightSampleInFlight = false;
     FTimerHandle DeferredInitialHeightSampleTimerHandle;
+    FCriticalSection PendingRosDataMutex;
+    FString PendingDisplayText;
+    double PendingTargetLat = 0.0;
+    double PendingTargetLon = 0.0;
+    double PendingTargetHeadingDeg = 0.0;
+    bool bHasPendingRosPose = false;
 
     /* ---------- Enhanced Input ---------- */
     UPROPERTY(EditDefaultsOnly, Category="Input") UInputAction* IA_MoveForward = nullptr;

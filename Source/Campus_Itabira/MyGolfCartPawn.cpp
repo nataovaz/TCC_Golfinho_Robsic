@@ -18,6 +18,7 @@
 #include "InputCoreTypes.h"
 #include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/ScopeLock.h"
 #include "TimerManager.h"
 
 namespace
@@ -36,6 +37,7 @@ constexpr float kGroundSampleIntervalSeconds = 1.0f;
 // reduzindo o pico de CPU/RAM que trava o desktop no startup.
 constexpr float kDeferredRosInitDelaySeconds = 2.0f;
 constexpr float kInitialGroundSampleDelaySeconds = 4.0f;
+constexpr float kStatePublishIntervalSeconds = 0.1f;
 }
 
 
@@ -76,6 +78,10 @@ void AMyGolfCartPawn::BeginPlay()
     Super::BeginPlay();
 
     LastActorLocation = GetActorLocation();
+    // A rotacao inicial do ator no editor representa o alinhamento do modelo
+    // do campus no mundo Unreal. O heading vindo do pipeline ROS deve girar
+    // o carrinho em torno dessa referencia, nao substitui-la.
+    BaseActorYawDeg = GetActorRotation().Yaw;
     DisplayText = TEXT("Aguardando GPS fix...");
     InitializeVisualCartMesh();
 
@@ -145,23 +151,33 @@ void AMyGolfCartPawn::InitializeRosInterfaces()
     PosePublisher = NodeComponent->CreatePublisher(
         TEXT("/campus_pose"),
         UROS2Publisher::StaticClass(),
-        UROS2PoseStampedMsg::StaticClass());
+        UROS2PoseStampedMsg::StaticClass(),
+        UROS2QoS::SensorData);
+
+    StatePublisher = NodeComponent->CreatePublisher(
+        TEXT("/estado_simulacao"),
+        UROS2Publisher::StaticClass(),
+        UROS2StrMsg::StaticClass(),
+        UROS2QoS::SensorData);
 
     FSubscriptionCallback Callback;
     Callback.BindDynamic(this, &AMyGolfCartPawn::OnMessageReceived);
     Subscriber = NodeComponent->CreateSubscriber(
         TEXT("/localizacao_display"),
         UROS2StrMsg::StaticClass(),
-        Callback);
+        Callback,
+        UROS2QoS::SensorData);
 
-    bRosInterfacesInitialized = PosePublisher != nullptr || Subscriber != nullptr;
+    bRosInterfacesInitialized =
+        PosePublisher != nullptr || StatePublisher != nullptr || Subscriber != nullptr;
 
     UE_LOG(
         LogTemp,
         Log,
-        TEXT("Golf cart ROS setup | node_state=%d publisher=%s subscriber=%s"),
+        TEXT("Golf cart ROS setup | node_state=%d pose_pub=%s state_pub=%s subscriber=%s"),
         static_cast<int32>(NodeComponent->State.GetValue()),
         PosePublisher ? TEXT("ok") : TEXT("null"),
+        StatePublisher ? TEXT("ok") : TEXT("null"),
         Subscriber ? TEXT("ok") : TEXT("null"));
 }
 
@@ -204,6 +220,20 @@ void AMyGolfCartPawn::Tick(float DeltaTime)
 
     UpdateVisualWheelSpin(DeltaTime);
 
+    {
+        FScopeLock Lock(&PendingRosDataMutex);
+        if (bHasPendingRosPose)
+        {
+            DisplayText = PendingDisplayText;
+            TargetLat = PendingTargetLat;
+            TargetLon = PendingTargetLon;
+            TargetHeadingDeg = PendingTargetHeadingDeg;
+            bHasTarget = true;
+            bHasFix = true;
+            bHasPendingRosPose = false;
+        }
+    }
+
     // ── Interpolação suave de posição GPS (10 Hz → 60 Hz) ──────────────────
     // Lerp da posição atual até o destino a cada frame para eliminar saltos.
     if (bHasTarget && GlobeAnchor)
@@ -213,15 +243,35 @@ void AMyGolfCartPawn::Tick(float DeltaTime)
 
         const double NewLat = LastLat + Alpha * (TargetLat - LastLat);
         const double NewLon = LastLon + Alpha * (TargetLon - LastLon);
+        const double HeadingDeltaDeg = FMath::FindDeltaAngleDegrees(
+            static_cast<float>(LastHeadingDeg),
+            static_cast<float>(TargetHeadingDeg));
+        const double NewHeadingDeg =
+            FMath::UnwindDegrees(LastHeadingDeg + Alpha * HeadingDeltaDeg);
 
         const bool bLatChanged = !FMath::IsNearlyEqual(NewLat, LastLat, 1e-9);
         const bool bLonChanged = !FMath::IsNearlyEqual(NewLon, LastLon, 1e-9);
+        const bool bHeadingChanged =
+            !FMath::IsNearlyEqual(NewHeadingDeg, LastHeadingDeg, 1e-4);
+
+        LastHeadingDeg = NewHeadingDeg;
 
         if (bLatChanged || bLonChanged)
         {
             LastLat = NewLat;
             LastLon = NewLon;
             MoveCartToLongitudeLatitudeHeight(LastLon, LastLat, LastAppliedHeight + kCartHeightOffsetMeters);
+        }
+
+        if (bHeadingChanged)
+        {
+            FRotator NewRotation = GetActorRotation();
+            // O heading do EKF cresce no sentido matematico (Leste -> Norte),
+            // mas o mapa local do Unreal/Cesium usa +Y apontando para Sul.
+            // Para a frente visual do carrinho coincidir com o deslocamento
+            // georreferenciado, o yaw aplicado no ator precisa inverter o sinal.
+            NewRotation.Yaw = static_cast<float>(BaseActorYawDeg - LastHeadingDeg);
+            SetActorRotation(NewRotation);
         }
     }
 
@@ -238,6 +288,19 @@ void AMyGolfCartPawn::Tick(float DeltaTime)
     Msg.Pose.Position    = {Loc.X/100.f, Loc.Y/100.f, Loc.Z/100.f}; // cm → m
     Msg.Pose.Orientation = {Rot.X, Rot.Y, Rot.Z, Rot.W};
     PosePublisher->Publish<UROS2PoseStampedMsg, FROSPoseStamped>(Msg);
+
+    if (StatePublisher && (T - LastStatePublishTimeSeconds) >= kStatePublishIntervalSeconds)
+    {
+        FROSStr SimState;
+        SimState.Data = FString::Printf(
+            TEXT("{\"x\":%.3f,\"y\":%.3f,\"z\":%.3f,\"heading\":%.3f}"),
+            Loc.X / 100.f,
+            Loc.Y / 100.f,
+            Loc.Z / 100.f,
+            LastHeadingDeg);
+        StatePublisher->Publish<UROS2StrMsg, FROSStr>(SimState);
+        LastStatePublishTimeSeconds = T;
+    }
 
     if (GlobeAnchor && GlobeAnchor->IsRegistered())
         if (auto* PC  = Cast<ACampusPlayerController>(UGameplayStatics::GetPlayerController(this,0)))
@@ -284,13 +347,12 @@ void AMyGolfCartPawn::OnMessageReceived(const UROS2GenericMsg* In)
     FROSStr Data;
     Msg->GetMsg(Data);
 
-    DisplayText = Data.Data;
-
     TArray<FString> Lines;
     Data.Data.ParseIntoArray(Lines, TEXT("\n"), true);
 
     double NewLat = LastLat;
     double NewLon = LastLon;
+    double NewHeadingDeg = TargetHeadingDeg;
 
     for (const FString& Line : Lines)
     {
@@ -312,6 +374,10 @@ void AMyGolfCartPawn::OnMessageReceived(const UROS2GenericMsg* In)
         {
             NewLon = FCString::Atod(*Val);
         }
+        else if (Key.Equals(TEXT("Heading")))
+        {
+            NewHeadingDeg = FCString::Atod(*Val);
+        }
     }
 
     if (NewLat == 0.0 || NewLon == 0.0)
@@ -319,13 +385,22 @@ void AMyGolfCartPawn::OnMessageReceived(const UROS2GenericMsg* In)
         return;
     }
 
-    // Seta destino para interpolação suave no Tick — evita saltos a 10 Hz
-    TargetLat  = NewLat;
-    TargetLon  = NewLon;
-    bHasTarget = true;
-    bHasFix    = true;
+    {
+        FScopeLock Lock(&PendingRosDataMutex);
+        PendingDisplayText = Data.Data;
+        PendingTargetLat = NewLat;
+        PendingTargetLon = NewLon;
+        PendingTargetHeadingDeg = NewHeadingDeg;
+        bHasPendingRosPose = true;
+    }
 
-    UE_LOG(LogTemp, Display, TEXT("[MyGolfCartPawn] Posicao: Lat=%.6f Lon=%.6f"), NewLat, NewLon);
+    UE_LOG(
+        LogTemp,
+        Display,
+        TEXT("[MyGolfCartPawn] Posicao: Lat=%.6f Lon=%.6f Heading=%.1f"),
+        NewLat,
+        NewLon,
+        NewHeadingDeg);
 }
 
 // ─────────── ENDPLAY --------------------------------------------------------
@@ -347,6 +422,11 @@ void AMyGolfCartPawn::EndPlay(const EEndPlayReason::Type Reason)
     {
         PosePublisher->Destroy();
         PosePublisher = nullptr;
+    }
+    if (IsValid(StatePublisher))
+    {
+        StatePublisher->Destroy();
+        StatePublisher = nullptr;
     }
 
     // Marca como não inicializado para evitar re-entradas.
